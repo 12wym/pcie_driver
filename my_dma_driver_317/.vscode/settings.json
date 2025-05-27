@@ -1,0 +1,7 @@
+{
+    "makefile.configureOnOpen": false,
+    "files.associations": {
+        "*.ino": "C",
+        "wait.h": "c"
+    }
+}

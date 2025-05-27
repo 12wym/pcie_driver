@@ -1,0 +1,1 @@
+cmd_/home/tronlong/rk3568/rk3/my_dma_driver/pcie_dma_driver.ko := aarch64-none-linux-gnu-ld -r  -EL  -maarch64elf -T ./scripts/module-common.lds -T ./arch/arm64/kernel/module.lds  --build-id  -o /home/tronlong/rk3568/rk3/my_dma_driver/pcie_dma_driver.ko /home/tronlong/rk3568/rk3/my_dma_driver/pcie_dma_driver.o /home/tronlong/rk3568/rk3/my_dma_driver/pcie_dma_driver.mod.o ;  true

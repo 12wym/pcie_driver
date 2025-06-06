@@ -31,7 +31,7 @@
 
 #define DRIVER_NAME "pci_fpga_driver"
 
-#define DRIVER_VERSION 2505190101
+#define DRIVER_VERSION 2506050102
 
 static struct semaphore pps_semaphore;
 static void __iomem *io_hwaddr;
@@ -71,7 +71,7 @@ MODULE_DEVICE_TABLE(pci, pci_ids);
 // queue_work(my_workqueue, &my_work);
 
 unsigned int inum = 0;
-
+int tail_count = 0;
 static irqreturn_t pcie_xdma_read_req_handler(int irq, void *dev_id)
 {
 	// dma_addr_t queueBufAddr;
@@ -83,22 +83,43 @@ static irqreturn_t pcie_xdma_read_req_handler(int irq, void *dev_id)
 	int i = 0;
 	if(irq == irq_msi_vec[0])
 	{
+		// misc_flag = 1;
 		spin_lock_irqsave(&(dmaQueueManagerHandler->queueArray[ADC_READ_QUEUE].spinlock), flags);
-		if(dmaQueueManagerHandler->queueArray[ADC_READ_QUEUE].restIdleNum <= 0)
-		{
-			// printk("full\n");
-			spin_unlock_irqrestore(&(dmaQueueManagerHandler->queueArray[ADC_READ_QUEUE].spinlock), flags);
-			return IRQ_HANDLED;
-		}
-		else
-		{
+		// if(dmaQueueManagerHandler->queueArray[ADC_READ_QUEUE].restIdleNum <= 9)
+		// {
+		// 	if(inum != last_inum)
+		// 	{
+		// 		printk("full %d\n",inum);
+		// 		last_inum = inum;
+		// 	}
+		// 	// 限制打印频率，避免日志洪水
+        //     // if(full_print_count++ % 50 == 0) {
+        //     //     printk(KERN_WARNING "Queue full, restIdleNum=%d, inum=%d\n",
+        //     //           dmaQueueManagerHandler->queueArray[ADC_READ_QUEUE].restIdleNum,
+        //     //           inum);
+        //     // }
+		// 	// for(i = 0;i < ADC_READ_SIZE;i++)
+		// 	// {
+		// 	// 	temp = ioread64(io_hwaddr + ADC_PCIE_ADDRESS_OFFSET + ADC_Offset * i);
+		// 	// 	temp = ioread64(io_hwaddr + ADC_PCIE_ADDRESS_OFFSET + 8 + ADC_Offset * i);
+		// 	// 	temp = ioread64(io_hwaddr + ADC_PCIE_ADDRESS_OFFSET + 16 + ADC_Offset * i);
+		// 	// 	temp = ioread64(io_hwaddr + ADC_PCIE_ADDRESS_OFFSET + 24 + ADC_Offset * i);
+		// 	// }
+		// 	temp = ioread64(io_hwaddr + ADC_PCIE_ADDRESS_OFFSET + 320);//触发信号
+			
+		// 	spin_unlock_irqrestore(&(dmaQueueManagerHandler->queueArray[ADC_READ_QUEUE].spinlock), flags);
+		// 	return IRQ_HANDLED;
+		// }
+		// else
+		// {
 			// printk("irq interrupt 0\n");
-			inum ++;
+			inum++;
 			for(i = 0; i < ADC_READ_SIZE ;i++){
 				next_tail = (dmaQueueManagerHandler->queueArray[ADC_READ_QUEUE].tail + i) % dmaQueueManagerHandler->queueArray[ADC_READ_QUEUE].totalNum;
+				// printk("next_tail:%d",next_tail);
 				queueBufAddr = next_tail * (dmaQueueManagerHandler->queueArray[ADC_READ_QUEUE].frameSize) + \
 							dmaQueueManagerHandler->queueArray[ADC_READ_QUEUE].virtualAddr;//queue;
-				// printk("data: ");
+				// printk("data: %d",i);
 				// for(index = 0; index < ADC_READ_SIZE; index++)
 				// {
 				//frame1
@@ -117,11 +138,11 @@ static irqreturn_t pcie_xdma_read_req_handler(int irq, void *dev_id)
 				temp = ioread64(io_hwaddr + ADC_PCIE_ADDRESS_OFFSET + 24 + ADC_Offset * i);
 				// printk("%016lx", temp);
 				*((unsigned int *)queueBufAddr + 3) = (unsigned int)(temp & 0xFFFFFFFF);//seq
-				// *((unsigned int *)queueBufAddr + 4) = (unsigned int)(temp >> 32 & 0xFFFFFFFF);//intv
-				*((unsigned int *)queueBufAddr + 4) = inum;
+				*((unsigned int *)queueBufAddr + 4) = (unsigned int)(temp >> 32 & 0xFFFFFFFF);//intv
+				// *((unsigned int *)queueBufAddr + 4) = inum; //for test
 				// printk("\n");
 
-				*((unsigned int *)queueBufAddr) = 0x18;//length
+				*((unsigned int *)queueBufAddr) = 0x20;//length 0x20-8 0x18
 			}
 			
 			temp = ioread64(io_hwaddr + ADC_PCIE_ADDRESS_OFFSET + 320);//触发信号
@@ -132,10 +153,19 @@ static irqreturn_t pcie_xdma_read_req_handler(int irq, void *dev_id)
 			// }
 			
 			// printk("\n");
+			if((dmaQueueManagerHandler->queueArray[ADC_READ_QUEUE].tail + ADC_READ_SIZE) >= dmaQueueManagerHandler->queueArray[ADC_READ_QUEUE].totalNum)
+			{
+				tail_count++;
+			}
 			dmaQueueManagerHandler->queueArray[ADC_READ_QUEUE].tail = (dmaQueueManagerHandler->queueArray[ADC_READ_QUEUE].tail + ADC_READ_SIZE) % \
 																	dmaQueueManagerHandler->queueArray[ADC_READ_QUEUE].totalNum;
-			dmaQueueManagerHandler->queueArray[ADC_READ_QUEUE].restIdleNum-=ADC_READ_SIZE;
-		}
+			// if(full_print_count2++ % 1 == 0) {
+			// 	printk("tail = %u\n",dmaQueueManagerHandler->queueArray[ADC_READ_QUEUE].tail);
+			// 	printk("inum = %u\n",inum);
+			// 	printk("restIdleNum = %u\n",dmaQueueManagerHandler->queueArray[ADC_READ_QUEUE].restIdleNum);
+			// }
+			// dmaQueueManagerHandler->queueArray[ADC_READ_QUEUE].restIdleNum-=ADC_READ_SIZE;
+		// }
 		spin_unlock_irqrestore(&(dmaQueueManagerHandler->queueArray[ADC_READ_QUEUE].spinlock), flags);
 	}
 	else if(irq == irq_msi_vec[1])
@@ -143,7 +173,7 @@ static irqreturn_t pcie_xdma_read_req_handler(int irq, void *dev_id)
 		// spin_lock_irqsave(&(dmaQueueManagerHandler->queueArray[PPS_WAIT_QUEUS].spinlock),flagsto);
 		// pps_flag = 1;
 		// spin_unlock_irqrestore(&(dmaQueueManagerHandler->queueArray[PPS_WAIT_QUEUS].spinlock),flagsto);
-			up(&pps_semaphore);//gps
+			up(&pps_semaphore);//pps
 		// printk("irq interrupt 1\n");
 	}
 	else if(irq == irq_msi_vec[2])
@@ -162,10 +192,10 @@ static irqreturn_t pcie_xdma_read_req_handler(int irq, void *dev_id)
 			}
 		}
 	}
-	else
-	{
-		printk("no irq interrupt\n");
-	}
+	// else
+	// {
+	// 	printk("no irq interrupt\n");
+	// }
 	// pr_info("msi int: %d\n", irq);
 	// set xdma
 	/*
@@ -384,6 +414,8 @@ static long pcie_adc_ioctl(struct file *filp, unsigned int cmd, unsigned long ar
 	int popNum;
 	long ret = -ENOMEM;
 	unsigned long flags;
+	int k2utail;
+	// struct adcFrame adctail;
 
 	switch (cmd)
 	{
@@ -430,6 +462,14 @@ static long pcie_adc_ioctl(struct file *filp, unsigned int cmd, unsigned long ar
 		spin_unlock_irqrestore(&(dmaQueueManagerHandler->queueArray[ADC_READ_QUEUE].spinlock), flags);
 		break;
 
+	case TAIL_RECEIVE:
+		spin_lock_irqsave(&(dmaQueueManagerHandler->queueArray[ADC_READ_QUEUE].spinlock), flags);
+		// adctail.k2ucount = tail_count;
+		k2utail = dmaQueueManagerHandler->queueArray[ADC_READ_QUEUE].tail;
+		ret = copy_to_user((int *)arg, &k2utail, sizeof(k2utail));
+		spin_unlock_irqrestore(&(dmaQueueManagerHandler->queueArray[ADC_READ_QUEUE].spinlock), flags);
+		break;
+
 	case SET_MISC_SIGNAL_PID:
 		misc_signal_pid = (pid_t)arg;
 		printk("misc_signal_pid:%d\n", misc_signal_pid);
@@ -465,6 +505,7 @@ static int pcie_adc_open(struct inode *inode, struct file *file)
 	dmaQueueManagerHandler->queueArray[ADC_READ_QUEUE].restIdleNum = ADC_FRAMENUM;
 	dmaQueueManagerHandler->queueArray[ADC_READ_QUEUE].totalNum = ADC_FRAMENUM;
 	spin_unlock_irqrestore(&(dmaQueueManagerHandler->queueArray[ADC_READ_QUEUE].spinlock), flags);
+	tail_count = 0;
 	return 0;
 }
 
@@ -534,7 +575,7 @@ static int pcie_adc_mmap(struct file *file, struct vm_area_struct *vma)
 		ret = -ENOBUFS;
 		goto err_quit;
 	}
-
+	inum = 0;
 	mutex_unlock(&(dmaQueueManagerHandler->queueArray[ADC_READ_QUEUE].mm_lock));
 	return 0;
 
@@ -1174,5 +1215,5 @@ module_init(pci_driver_init);
 module_exit(pci_driver_exit);
 
 MODULE_LICENSE("GPL");
-MODULE_AUTHOR("guo liang");
+MODULE_AUTHOR("guo liang & wym");
 MODULE_DESCRIPTION("PCIe FPGA Driver");

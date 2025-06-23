@@ -113,12 +113,22 @@ static irqreturn_t pcie_xdma_read_req_handler(int irq, void *dev_id)
 		// else
 		// {
 			// printk("irq interrupt 0\n");
+			// 检查关键指针是否有效
+			if (!io_hwaddr || !dmaQueueManagerHandler) {
+				pr_err("Invalid io_hwaddr or dmaQueueManagerHandler!\n");
+				return IRQ_NONE;
+			}
 			inum++;
 			for(i = 0; i < ADC_READ_SIZE ;i++){
-				next_tail = (dmaQueueManagerHandler->queueArray[ADC_READ_QUEUE].tail + i) % dmaQueueManagerHandler->queueArray[ADC_READ_QUEUE].totalNum;
+				next_tail = (dmaQueueManagerHandler->queueArray[ADC_READ_QUEUE].tail + i) % (dmaQueueManagerHandler->queueArray[ADC_READ_QUEUE].totalNum);
 				// printk("next_tail:%d",next_tail);
 				queueBufAddr = next_tail * (dmaQueueManagerHandler->queueArray[ADC_READ_QUEUE].frameSize) + \
 							dmaQueueManagerHandler->queueArray[ADC_READ_QUEUE].virtualAddr;//queue;
+				// 检查 queueBufAddr 是否有效
+				if (!queueBufAddr) {
+					pr_err("Invalid queueBufAddr at next_tail=%d\n", next_tail);
+					continue;
+				}
 				// printk("data: %d",i);
 				// for(index = 0; index < ADC_READ_SIZE; index++)
 				// {
@@ -514,6 +524,8 @@ static int pcie_adc_open(struct inode *inode, struct file *file)
 static int pcie_adc_release(struct inode *inode, struct file *filp)
 {
 	unsigned long flags;
+	// 1. 禁止中断
+    free_irq(irq_msi_vec[0], g_pdev);
 	// free DMA queue
 	spin_lock_irqsave(&(dmaQueueManagerHandler->queueArray[ADC_READ_QUEUE].spinlock), flags);
 	dmaQueueManagerHandler->queueArray[ADC_READ_QUEUE].restIdleNum = 0;

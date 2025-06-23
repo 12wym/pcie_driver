@@ -46,8 +46,9 @@
 /* ADC commands codes */
 #define DATA_NUM_READ					0x0a000000
 #define DATA_READ_SUBMIT				0x0b000000
-#define SET_MISC_SIGNAL_PID				0x0c000000
-#define SET_MISC_SIGNAL_NUM				0x0d000000	
+// #define SET_MISC_SIGNAL_PID				0x0c000000
+// #define SET_MISC_SIGNAL_NUM				0x0d000000	
+#define TAIL_RECEIVE					0x0e000000
 
 #define DAC_DMA_SEND_DONE_FREE 			0
 #define DAC_DMA_SEND_WORKING			1
@@ -61,6 +62,10 @@
 #define ADC_TOTAL_SEND_FRAME_NUM_OFFSET 0x68 //4096+104	4200
 #define ADC_SAMPLING_NUM_OFFSET			0x6c //4096+108 4204
 #define ADC_WARN_OFFSET					0xa0 //4096+160 4256
+
+/* WARN commands codes */
+#define SET_MISC_SIGNAL_PID				0x0a000000
+#define SET_MISC_SIGNAL_NUM				0x0b000000
 
 /* PPS commands codes */
 #define WAIT_PPS_INTERRUPT				0x0a000000
@@ -136,6 +141,11 @@ struct dacFrame{
 	int frameIndex;
 	int frameNum;
 };
+
+// struct adcFrame{
+// 	int k2utail;
+// 	int k2ucount;
+// };
 
 struct Version{
 	int fpga_version;

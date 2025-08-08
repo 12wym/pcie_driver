@@ -46,8 +46,6 @@
 /* ADC commands codes */
 #define DATA_NUM_READ					0x0a000000
 #define DATA_READ_SUBMIT				0x0b000000
-// #define SET_MISC_SIGNAL_PID				0x0c000000
-// #define SET_MISC_SIGNAL_NUM				0x0d000000	
 #define TAIL_RECEIVE					0x0e000000
 
 #define DAC_DMA_SEND_DONE_FREE 			0
@@ -63,15 +61,15 @@
 #define ADC_SAMPLING_NUM_OFFSET			0x6c //4096+108 4204
 #define ADC_WARN_OFFSET					0xa0 //4096+160 4256
 
-/* WARN commands codes */
-#define SET_MISC_SIGNAL_PID				0x0a000000
-#define SET_MISC_SIGNAL_NUM				0x0b000000
-
 /* PPS commands codes */
 #define WAIT_PPS_INTERRUPT				0x0a000000
 
 /* INFO commands codes */
 #define VERSION_GET						0x0a000000
+
+/* WARN commands codes */
+#define SET_MISC_SIGNAL_PID				0x0a000000
+#define SET_MISC_SIGNAL_NUM				0x0b000000
 
 /* Queue control */
 #define FRAMESIZE 						2048

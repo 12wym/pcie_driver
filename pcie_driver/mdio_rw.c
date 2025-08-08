@@ -4,13 +4,6 @@
 #include <linux/of.h>
 #include <linux/of_mdio.h>
 #include <linux/phy.h>
-#include <linux/gpio.h>
-#include <linux/timer.h>
-#include <linux/jiffies.h>
-
-#define GPIO_PIN 92  // GPIO2_D4 2*32 + 3*8 + 4
-static struct timer_list gpio_timer;
-static int gpio_state = 0;
 
 static struct mii_bus *mdio_bus = NULL;
 static int phy_addr_6 = 0x016; // port 6 -> CPU1
@@ -96,18 +89,9 @@ static void write_phy_register(int phy_addr, int reg, unsigned short value)
     }
 }
 
-static void gpio_timer_callback(struct timer_list *t)
-{
-    gpio_state = !gpio_state;
-    gpio_set_value(GPIO_PIN, gpio_state);
-    mod_timer(&gpio_timer, jiffies + msecs_to_jiffies(500));
-}
-
 // 驱动初始化
 static int __init mdio_driver_init(void)
 {
-    int ret;
-
     pr_info("MDIO Driver Loading...\n");
 
     mdio_bus = get_mdio_from_gmac();
@@ -115,22 +99,6 @@ static int __init mdio_driver_init(void)
         pr_err("Failed to get MDIO bus\n");
         return -ENODEV;
     }
-    // 初始化GPIO
-    ret = gpio_request(GPIO_PIN, "GPIO2_D4");
-    if (ret) {
-        pr_err("Failed to request GPIO %d\n", GPIO_PIN);
-        return ret;
-    }
-    else
-    {
-        printk("succeed to set GPIO\n");
-    }
-
-    gpio_direction_output(GPIO_PIN, 1);
-
-    // 初始化定时器
-    timer_setup(&gpio_timer, gpio_timer_callback, 0);
-    mod_timer(&gpio_timer, jiffies + msecs_to_jiffies(500));//HZ -> 1s
 
     // 执行读写操作
     read_phy_register();
@@ -145,9 +113,6 @@ static int __init mdio_driver_init(void)
 // 驱动卸载
 static void __exit mdio_driver_exit(void)
 {
-    del_timer(&gpio_timer);
-    gpio_set_value(GPIO_PIN, 0);
-    gpio_free(GPIO_PIN);
     pr_info("MDIO Driver Unloading...\n");
 }
 
@@ -156,4 +121,4 @@ module_exit(mdio_driver_exit);
 
 MODULE_LICENSE("GPL");
 MODULE_AUTHOR("guo liang");
-MODULE_DESCRIPTION("marvell mdio set and GPIO timer");
+MODULE_DESCRIPTION("marvell mdio set");

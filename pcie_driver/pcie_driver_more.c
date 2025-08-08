@@ -24,36 +24,46 @@
 #include <linux/kthread.h>
 #include <linux/wait.h>
 #include <linux/mutex.h>
+// #include <linux/tty.h>
+// #include <linux/tty_driver.h>
+// #include <linux/tty_flip.h>
+// #include <linux/slab.h>
+// #include <linux/vmalloc.h>
+// #include <linux/serial.h>
+// #include <linux/serial_core.h>
+
 #include <linux/timekeeping.h>
-#include <linux/sched/signal.h>
 
 #include "./pcie_driver.h"
 
 #define DRIVER_NAME "pci_fpga_driver"
 
-#define DRIVER_VERSION 2505280104
+#define DRIVER_VERSION 2503070101
 
 static struct semaphore pps_semaphore;
 static void __iomem *io_hwaddr;
 
 static struct dmaQueueManagerSpace *dmaQueueManagerHandler;
 static void __iomem * adc_dma_manipulate_base;
+// static void __iomem * time_manipulate_base;
 
 static struct pci_dev *g_pdev = NULL;
 static resource_size_t pcie_base0_address;
-static int* irq_msi_vec;
+// static int irq;
+static int* irq_msi_vec;	// 
 static int msi_irq_num = 0;
 int dac_fpga_buf_num = 0;
 static u64 transfer_times = 0;
 static u64 transfer_error_times = 0;
 static u64 total_transfer_times = 0;
 
-static pid_t misc_signal_pid = -1;
-static int misc_irq_signal = SIGIO;
+// unsigned int test_zero = 0;
+// static struct tty_driver *gps_pcie_tty_driver;
+// static struct tty_port *gps_pcie_tty_ports[VIRTUAL_TTY_MINORS] = {NULL, NULL};
+// static const struct tty_port_operations gps_pcie_tty_port_ops = {};
 
-#define BUFFER_SIZE 2048
+#define BUFFER_SIZE 1024
 static char kernel_buffer[BUFFER_SIZE];
-// unsigned int warn_signal = 0;
 
 #define ADC_READ_SIZE 10
 
@@ -70,51 +80,31 @@ MODULE_DEVICE_TABLE(pci, pci_ids);
 // 将工作项提交到工作队列
 // queue_work(my_workqueue, &my_work);
 
-unsigned int inum = 0;
-int last_inum = -1;
-static int misc_flag = 0;
 static irqreturn_t pcie_xdma_read_req_handler(int irq, void *dev_id)
 {
 	// dma_addr_t queueBufAddr;
 	u64 *queueBufAddr;
 	unsigned long flags;
 	unsigned long temp;
-	// int index = 0;
 	int next_tail;
+	// int index = 0;
 	int i = 0;
-	static int full_print_count = 0;  // 添加打印限制计数器
-	static int full_print_count2 = 0;  // 添加打印限制计数器
 	if(irq == irq_msi_vec[0])
 	{
-		misc_flag = 1;
 		spin_lock_irqsave(&(dmaQueueManagerHandler->queueArray[ADC_READ_QUEUE].spinlock), flags);
-		if(dmaQueueManagerHandler->queueArray[ADC_READ_QUEUE].restIdleNum <= 9)
+		if(dmaQueueManagerHandler->queueArray[ADC_READ_QUEUE].restIdleNum <= 0)
 		{
-			if(inum != last_inum)
-			{
-				printk("full %d\n",inum);
-				last_inum = inum;
-			}
-			// 限制打印频率，避免日志洪水
-            if(full_print_count++ % 50 == 0) {
-                printk(KERN_WARNING "Queue full, restIdleNum=%d, inum=%d\n",
-                      dmaQueueManagerHandler->queueArray[ADC_READ_QUEUE].restIdleNum,
-                      inum);
-            }
-			
+			// printk("full\n");
 			spin_unlock_irqrestore(&(dmaQueueManagerHandler->queueArray[ADC_READ_QUEUE].spinlock), flags);
 			return IRQ_HANDLED;
 		}
 		else
 		{
-			// printk("irq interrupt 0\n");
-			inum++;
 			for(i = 0; i < ADC_READ_SIZE ;i++){
 				next_tail = (dmaQueueManagerHandler->queueArray[ADC_READ_QUEUE].tail + i) % dmaQueueManagerHandler->queueArray[ADC_READ_QUEUE].totalNum;
-				printk("next_tail:%d",next_tail);
 				queueBufAddr = next_tail * (dmaQueueManagerHandler->queueArray[ADC_READ_QUEUE].frameSize) + \
 							dmaQueueManagerHandler->queueArray[ADC_READ_QUEUE].virtualAddr;//queue;
-				// printk("data: %d",i);
+				// printk("data: ");
 				// for(index = 0; index < ADC_READ_SIZE; index++)
 				// {
 				//frame1
@@ -133,16 +123,16 @@ static irqreturn_t pcie_xdma_read_req_handler(int irq, void *dev_id)
 				temp = ioread64(io_hwaddr + ADC_PCIE_ADDRESS_OFFSET + 24 + ADC_Offset * i);
 				// printk("%016lx", temp);
 				*((unsigned int *)queueBufAddr + 3) = (unsigned int)(temp & 0xFFFFFFFF);//seq
-				// *((unsigned int *)queueBufAddr + 4) = (unsigned int)(temp >> 32 & 0xFFFFFFFF);//intv
-				*((unsigned int *)queueBufAddr + 4) = inum; //for test
-				// printk("\n");
-
-				*((unsigned int *)queueBufAddr) = 0x20;//length 0x20-8 0x18
+				*((unsigned int *)queueBufAddr + 4) = (unsigned int)(temp >> 32 & 0xFFFFFFFF);//intv
+				// }
+				// temp = ioread64(io_hwaddr + ADC_PCIE_ADDRESS_OFFSET + 32);//触发信号
+				// printk("%016lx", temp);
+				*((unsigned int *)queueBufAddr) = 0x28;//length
 			}
 			
 			temp = ioread64(io_hwaddr + ADC_PCIE_ADDRESS_OFFSET + 320);//触发信号
+			
 			// printk("%016lx", temp);
-			// printk("\n");
 				// printk("%llx ", queueBufAddr[index]);
 				//printk("index:%u",index);
 			// }
@@ -150,11 +140,6 @@ static irqreturn_t pcie_xdma_read_req_handler(int irq, void *dev_id)
 			// printk("\n");
 			dmaQueueManagerHandler->queueArray[ADC_READ_QUEUE].tail = (dmaQueueManagerHandler->queueArray[ADC_READ_QUEUE].tail + ADC_READ_SIZE) % \
 																	dmaQueueManagerHandler->queueArray[ADC_READ_QUEUE].totalNum;
-			if(full_print_count2++ % 1 == 0) {
-				printk("tail = %u\n",dmaQueueManagerHandler->queueArray[ADC_READ_QUEUE].tail);
-				printk("inum = %u\n",inum);
-				printk("restIdleNum = %u\n",dmaQueueManagerHandler->queueArray[ADC_READ_QUEUE].restIdleNum);
-			}
 			dmaQueueManagerHandler->queueArray[ADC_READ_QUEUE].restIdleNum-=ADC_READ_SIZE;
 		}
 		spin_unlock_irqrestore(&(dmaQueueManagerHandler->queueArray[ADC_READ_QUEUE].spinlock), flags);
@@ -164,29 +149,9 @@ static irqreturn_t pcie_xdma_read_req_handler(int irq, void *dev_id)
 		// spin_lock_irqsave(&(dmaQueueManagerHandler->queueArray[PPS_WAIT_QUEUS].spinlock),flagsto);
 		// pps_flag = 1;
 		// spin_unlock_irqrestore(&(dmaQueueManagerHandler->queueArray[PPS_WAIT_QUEUS].spinlock),flagsto);
-		up(&pps_semaphore);//pps
-		// printk("irq interrupt 1\n");
+		up(&pps_semaphore);
+		printk("irq interrupt 1\n");
 	}
-	else if(irq == irq_msi_vec[2])
-	{
-		printk("irq interrupt 3\n");
-		// printk("misc_signal_pid:%d\n", misc_signal_pid);
-		if(misc_signal_pid > 0)
-		{
-			struct task_struct *task = pid_task(find_vpid(misc_signal_pid), PIDTYPE_PID);
-			if(task)
-			{
-				send_sig(misc_irq_signal, task, 0);//发送信号给应用层
-				// pr_info("send signal %d to pid %d\n", misc_irq_signal, misc_signal_pid);
-				// warn_signal = ioread32(io_hwaddr + ADC_MANIPULATE_OFFSET + ADC_WARN_OFFSET);
-				// pr_info("ADC warn signal: %x\n", warn_signal);
-			}
-		}
-	}
-	// else
-	// {
-	// 	printk("no irq interrupt\n");
-	// }
 	// pr_info("msi int: %d\n", irq);
 	// set xdma
 	/*
@@ -291,7 +256,7 @@ static int dac_thread_fn(void *data)
 			}
 		}
 	}
-	// printk("%s : dma transfer success times = %llu, error times : %llu\n", DRIVER_NAME, transfer_times, transfer_error_times);
+	printk("%s : dma transfer success times = %llu, error times : %llu\n", DRIVER_NAME, transfer_times, transfer_error_times);
 	transfer_times = 0;
 	transfer_error_times = 0;
 	total_transfer_times = 0;
@@ -405,7 +370,6 @@ static long pcie_adc_ioctl(struct file *filp, unsigned int cmd, unsigned long ar
 	int popNum;
 	long ret = -ENOMEM;
 	unsigned long flags;
-	// int full_print_count3 = 0;
 
 	switch (cmd)
 	{
@@ -436,11 +400,6 @@ static long pcie_adc_ioctl(struct file *filp, unsigned int cmd, unsigned long ar
 		frameIndex = dmaQueueManagerHandler->queueArray[ADC_READ_QUEUE].totalNum - dmaQueueManagerHandler->queueArray[ADC_READ_QUEUE].restIdleNum;
 		spin_unlock_irqrestore(&(dmaQueueManagerHandler->queueArray[ADC_READ_QUEUE].spinlock), flags);
 		// printk("frameIndex = %d", frameIndex);
-		// if(full_print_count3++ % 100 == 0)
-		if(misc_flag == 1){
-			printk("read tail = %u\n",dmaQueueManagerHandler->queueArray[ADC_READ_QUEUE].tail);
-			misc_flag = 0;
-		}
 		ret = copy_to_user((int *)arg, &frameIndex, sizeof(frameIndex));
 		break;
 
@@ -457,16 +416,6 @@ static long pcie_adc_ioctl(struct file *filp, unsigned int cmd, unsigned long ar
 		spin_unlock_irqrestore(&(dmaQueueManagerHandler->queueArray[ADC_READ_QUEUE].spinlock), flags);
 		break;
 
-	case SET_MISC_SIGNAL_PID:
-		misc_signal_pid = (pid_t)arg;
-		printk("misc_signal_pid:%d\n", misc_signal_pid);
-		break;
-
-	case SET_MISC_SIGNAL_NUM:
-		misc_irq_signal = (int)arg;
-		printk("misc_irq_signal:%d\n", misc_irq_signal);
-		break;
-		
 	default:
 		break;
 	}
@@ -561,7 +510,7 @@ static int pcie_adc_mmap(struct file *file, struct vm_area_struct *vma)
 		ret = -ENOBUFS;
 		goto err_quit;
 	}
-	inum = 0;
+
 	mutex_unlock(&(dmaQueueManagerHandler->queueArray[ADC_READ_QUEUE].mm_lock));
 	return 0;
 
@@ -773,8 +722,8 @@ static int time_open(struct inode *inode, struct file *file)
 	// 	return -EFAULT;
 	// }
 	// else{
-		// sema_init(&pps_semaphore,0);
-		// printk("pps_semaphore open success\n");
+		sema_init(&pps_semaphore,0);
+		printk("pps_semaphore open success\n");
 	// }
 
 	return 0;
@@ -833,6 +782,65 @@ static long time_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
 	return ret;
 }
 
+// static int gps_pcie_tty_open(struct tty_struct *tty, struct file *filp)
+// {
+//     int port_num = tty->index;
+
+//     if (port_num >= VIRTUAL_TTY_MINORS)
+//         return -ENODEV;
+
+//     // 设置 tty->port
+//     tty->port = gps_pcie_tty_ports[port_num];
+
+//     // 打开端口close(tty->port, tty, filp);
+// }
+
+// static int gps_pcie_tty_write(struct tty_struct *tty, const unsigned char *buf, int count)
+// {
+//     int port_num = tty->index;
+    
+//     int other_port_num = (port_num == 0) ? 1 : 0;
+    
+//     struct tty_port *other_port = gps_pcie_tty_ports[other_port_num];
+//     struct tty_struct *other_tty = tty_port_tty_get(other_port);
+
+//     if (other_tty) {
+//         tty_insert_flip_string(other_port, buf, count);
+//         tty_flip_buffer_push(other_port);
+//         tty_kref_put(other_tty);
+//     }
+
+//     return count;
+// }
+// static void gps_pcie_tty_close(struct tty_struct *tty, struct file *filp)
+// {
+//     tty_port_close(tty->port, tty, filp);
+// }
+
+// static int gps_pcie_tty_write(struct tty_struct *tty, const unsigned char *buf, int count)
+// {
+//     int port_num = tty->index;
+    
+//     int other_port_num = (port_num == 0) ? 1 : 0;
+    
+//     struct tty_port *other_port = gps_pcie_tty_ports[other_port_num];
+//     struct tty_struct *other_tty = tty_port_tty_get(other_port);
+
+//     if (other_tty) {
+//         tty_insert_flip_string(other_port, buf, count);
+//         tty_flip_buffer_push(other_port);
+//         tty_kref_put(other_tty);
+//     }
+
+//     return count;
+// }
+
+// static const struct tty_operations gps_pcie_tty_ops = {
+//     .open = gps_pcie_tty_open,
+//     .close = gps_pcie_tty_close,
+//     .write = gps_pcie_tty_write,
+// };
+
 static const struct file_operations pcie_adc_fops = {
 	.open = pcie_adc_open,
 	.release = pcie_adc_release,
@@ -878,8 +886,8 @@ static ssize_t info_read(struct file *file, char __user *buf, size_t count, loff
 	u32 fpga_dac_expired_frame_num = 0;
 	u32 fpga_dac_total_rec_frame_num = 0;
 	u32 fpga_adc_expired_frame_num = 0;
-	u32 adc_send_success_num = 0;
 	u32 adc_fpga_total_send_frame_num = 0;
+	u32 adc_send_success_num = 0;
 	u32 adc_sampling_num = 0;
 	u32 fpga_version = 0;
 	if(*ppos == 0)
@@ -897,11 +905,11 @@ static ssize_t info_read(struct file *file, char __user *buf, size_t count, loff
 |*********************VERSION*********************|\n\
 |* DRIVER_VER: %lu | FPGA_VER: %02u%02u%02u%02u%02u *|\n\
 |***********************DAC***********************|\n\
-|* LINUX SUCCESS: %llu    | FAIL: %llu *|\n\
-|* FPGA EXPIRE_NUM: %u    | TOTAL_NUM: %u *|\n\
+|* LINUX SUCCESS: %llu | FAIL: %llu *|\n\
+|* FPGA EXPIRE_NUM: %u | TOTAL_NUM: %u *|\n\
 |***********************ADC***********************|\n\
-|* UPLOAD_EXPIRE_NUM: %u  | UPLOAD_SUCCESS_NUM: %u  *|\n\
-|* UPLOAD_TOTAL_NUM: %u | SAMPLING_TOTAL_NUM: %u *|\n\
+|* UPLOAD_EXPIRE_NUM: %u | UPLOAD_SUCCESS_NUM: %u *|\n\
+|* UPLOAD_TOTAL_NUM: %u  | SAMPLING_TOTAL_NUM: %u *|\n\
 |-----------------------END-----------------------|\n", \
 DRIVER_VERSION, ((fpga_version >> 9) & 0x7F), ((fpga_version >> 5) & 0xF), ((fpga_version >> 0) & 0x1F), ((fpga_version >> 24) & 0xFF), ((fpga_version >> 16) & 0xFF), transfer_times, transfer_error_times, fpga_dac_expired_frame_num, fpga_dac_total_rec_frame_num, fpga_adc_expired_frame_num, adc_send_success_num, adc_fpga_total_send_frame_num, adc_sampling_num); //|* FPGA BUF EMPTY TIMES: %u *|\n 
 		data_len = strlen(kernel_buffer);
@@ -967,6 +975,34 @@ static int pci_probe(struct pci_dev *pdev, const struct pci_device_id *ent)
 	int ret = -ENOMEM;
 	int num_vectors = -ENOMEM;
 	int i;
+	// int retval = -ENOMEM;
+	// unsigned long reg;
+
+	// gps_pcie_tty_driver = tty_alloc_driver(VIRTUAL_TTY_MINORS, TTY_DRIVER_REAL_RAW);
+    // if (IS_ERR(gps_pcie_tty_driver))
+    //     return PTR_ERR(gps_pcie_tty_driver);
+
+    // gps_pcie_tty_driver->owner = THIS_MODULE;
+    // gps_pcie_tty_driver->driver_name = DRIVER_NAME;
+    // gps_pcie_tty_driver->name = "ttyPCIE";
+    // gps_pcie_tty_driver->major = TTY_MAJOR_AUTO;
+    // gps_pcie_tty_driver->minor_start = 0;
+    // gps_pcie_tty_driver->type = TTY_DRIVER_TYPE_SERIAL;
+    // gps_pcie_tty_driver->subtype = SERIAL_TYPE_NORMAL;
+    // gps_pcie_tty_driver->init_termios = tty_std_termios;
+    // gps_pcie_tty_driver->init_termios.c_cflag = B9600 | CS8 | CREAD | HUPCL | CLOCAL;
+    // tty_set_operations(gps_pcie_tty_driver, &gps_pcie_tty_ops);
+
+	// for (i = 0; i < VIRTUAL_TTY_MINORS; i++) {
+    //     gps_pcie_tty_ports[i] = kzalloc(sizeof(struct tty_port), GFP_KERNEL);
+    //     if (!gps_pcie_tty_ports[i]) {
+    //         ret = -ENOMEM;
+    //         goto err_free_ports;
+    //     }
+    //     tty_port_init(gps_pcie_tty_ports[i]);
+    //     gps_pcie_tty_ports[i]->ops = &gps_pcie_tty_port_ops;
+    // }
+    // gps_pcie_tty_driver->ports = gps_pcie_tty_ports;
 
 	printk(KERN_INFO "PCIe Device Detected: Vendor ID: %x, Device ID: %x\n",
 		   pdev->vendor, pdev->device);
@@ -1062,18 +1098,24 @@ static int pci_probe(struct pci_dev *pdev, const struct pci_device_id *ent)
 		printk("%s : Can not register misc device, error code: %d\n", DRIVER_NAME, ret);
 		goto err7;
 	}
-	sema_init(&pps_semaphore,0);
 	// request msi/msix IRQ
-	num_vectors = pci_alloc_irq_vectors(pdev, 3, 8, PCI_IRQ_MSIX | PCI_IRQ_MSI);
-	if (num_vectors < 3)
+	num_vectors = pci_alloc_irq_vectors(pdev, 1, 8, PCI_IRQ_MSIX | PCI_IRQ_MSI);
+	if (num_vectors < 0)
 	{
 		pr_err("Failed to allocate IRQ vectors\n");
 		goto err1;
 	}
-	else
-	{
-		printk("Allocated %d IRQ vectors\n", num_vectors);
-	}
+	// ret = tty_register_driver(gps_pcie_tty_driver);
+    // if (ret) {
+    //     goto err_free_ports;
+    // }
+    // pr_info("gps_pcie_tty loaded\n");
+	// irq = pci_irq_vector(pdev, 0);
+	// if (irq < 0)
+	// {
+	// 	pr_err("Failed to get IRQ vector 0\n");
+	// 	goto err1;
+	// }
 	msi_irq_num = num_vectors;
 	irq_msi_vec = (int *)kzalloc(sizeof(int) * num_vectors, GFP_KERNEL);
 	if(!irq_msi_vec)
@@ -1097,10 +1139,10 @@ static int pci_probe(struct pci_dev *pdev, const struct pci_device_id *ent)
 			goto err4;
 		}
 	}
-
+	// ret = request_irq(irq, pcie_xdma_read_req_handler, 0, "my_pcie_irq", pdev);
+	
+	// ret = request_irq(51, pcie_dma_int, IRQF_SHARED, "my_pcie_dma_irq", pdev);
 	printk("%s : PCIE_FPGA_DRIVER version : %lu, install success!\n", DRIVER_NAME, DRIVER_VERSION);
-	// warn_signal = ioread32(io_hwaddr + ADC_MANIPULATE_OFFSET + ADC_WARN_OFFSET);
-	// pr_info("ADC warn signal: %x\n", warn_signal);
 	// success
 	return 0;
 
@@ -1132,7 +1174,19 @@ err7:
 	misc_deregister(&pcie_dac_dev);
 	misc_deregister(&pcie_info);
 	return -EFAULT;
-
+// err_free_ports:
+//     for (i = 0; i < VIRTUAL_TTY_MINORS; i++) {
+//         if (gps_pcie_tty_ports[i])
+//         {
+//             kfree(gps_pcie_tty_ports[i]);
+//             gps_pcie_tty_ports[i] = NULL;
+//         }
+//     }
+//     if(gps_pcie_tty_driver)
+//     {
+//         tty_driver_kref_put(gps_pcie_tty_driver);
+//     }
+//     return ret;
 }
 
 // 3. 设备移除函数
@@ -1172,6 +1226,24 @@ static void pci_remove(struct pci_dev *pdev)
 	{
 		ioport_unmap(io_hwaddr);
 	}
+	// for (i = 0; i < VIRTUAL_TTY_MINORS; i++) {
+    //     if (gps_pcie_tty_ports[i] != NULL)
+    //     {
+    //         tty_port_tty_hangup(gps_pcie_tty_ports[i], false);
+    //         tty_port_destroy(gps_pcie_tty_ports[i]);
+    //         kfree(gps_pcie_tty_ports[i]);
+    //         gps_pcie_tty_ports[i] = NULL;
+    //     }
+    // }
+    // 防止gps_pcie_tty_driver中在tty_driver_kref_put里重复释放
+    // gps_pcie_tty_driver->ports = NULL;
+
+    // if(gps_pcie_tty_driver)
+    // {
+    //     tty_driver_kref_put(gps_pcie_tty_driver);
+    // }
+    // gps_pcie_tty_driver = NULL;
+    // pr_info("gps_pcie_tty driver unloaded\n");
 	
 	pci_release_regions(pdev);
 	pci_disable_device(pdev);

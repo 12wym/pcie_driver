@@ -1,9 +1,0 @@
-{
-    "files.associations": {
-        "*.ino": "C",
-        "pci.h": "c",
-        "sched.h": "c",
-        "pcie_driver.h": "c"
-    },
-    "makefile.configureOnOpen": false
-}

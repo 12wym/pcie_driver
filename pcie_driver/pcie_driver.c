@@ -31,7 +31,7 @@
 
 #define DRIVER_NAME "pci_fpga_driver"
 
-#define DRIVER_VERSION 2505280104
+#define DRIVER_VERSION 2506200101
 
 static struct semaphore pps_semaphore;
 static void __iomem *io_hwaddr;
@@ -71,8 +71,7 @@ MODULE_DEVICE_TABLE(pci, pci_ids);
 // queue_work(my_workqueue, &my_work);
 
 unsigned int inum = 0;
-int last_inum = -1;
-// static int misc_flag = 0;
+int tail_count = 0;
 static irqreturn_t pcie_xdma_read_req_handler(int irq, void *dev_id)
 {
 	// dma_addr_t queueBufAddr;
@@ -82,87 +81,63 @@ static irqreturn_t pcie_xdma_read_req_handler(int irq, void *dev_id)
 	// int index = 0;
 	int next_tail;
 	int i = 0;
-	// static int full_print_count = 0;  // 添加打印限制计数器
-	// static int full_print_count2 = 0;  // 添加打印限制计数器
 	if(irq == irq_msi_vec[0])
 	{
 		// misc_flag = 1;
 		spin_lock_irqsave(&(dmaQueueManagerHandler->queueArray[ADC_READ_QUEUE].spinlock), flags);
-		if(dmaQueueManagerHandler->queueArray[ADC_READ_QUEUE].restIdleNum <= 9)
-		{			
-			spin_unlock_irqrestore(&(dmaQueueManagerHandler->queueArray[ADC_READ_QUEUE].spinlock), flags);
-			return IRQ_HANDLED;
+		// 检查关键指针是否有效
+		if (!io_hwaddr || !dmaQueueManagerHandler) {
+			pr_err("Invalid io_hwaddr or dmaQueueManagerHandler!\n");
+			return IRQ_NONE;
 		}
-		else
-		{
-			if (!io_hwaddr || !dmaQueueManagerHandler) {
-				pr_err("Invalid io_hwaddr or dmaQueueManagerHandler!\n");
-				return IRQ_NONE;
+		inum++;
+		for(i = 0; i < ADC_READ_SIZE ;i++){
+			next_tail = (dmaQueueManagerHandler->queueArray[ADC_READ_QUEUE].tail + i) % (dmaQueueManagerHandler->queueArray[ADC_READ_QUEUE].totalNum);
+			// printk("next_tail:%d",next_tail);
+			queueBufAddr = next_tail * (dmaQueueManagerHandler->queueArray[ADC_READ_QUEUE].frameSize) + \
+						dmaQueueManagerHandler->queueArray[ADC_READ_QUEUE].virtualAddr;//queue;
+			// 检查 queueBufAddr 是否有效
+			if (!queueBufAddr) {
+				pr_err("Invalid queueBufAddr at next_tail=%d\n", next_tail);
+				continue;
 			}
-			// printk("irq interrupt 0\n");
-			inum++;
-			for(i = 0; i < ADC_READ_SIZE ;i++){
-				next_tail = (dmaQueueManagerHandler->queueArray[ADC_READ_QUEUE].tail + i) % dmaQueueManagerHandler->queueArray[ADC_READ_QUEUE].totalNum;
-				// printk("next_tail:%d",next_tail);
-				queueBufAddr = next_tail * (dmaQueueManagerHandler->queueArray[ADC_READ_QUEUE].frameSize) + \
-							dmaQueueManagerHandler->queueArray[ADC_READ_QUEUE].virtualAddr;//queue;
-				// 检查 queueBufAddr 是否有效
-				if (!queueBufAddr) {
-					pr_err("Invalid queueBufAddr at next_tail=%d\n", next_tail);
-					continue;
-				}
-				// printk("data: %d",i);
-				// for(index = 0; index < ADC_READ_SIZE; index++)
-				// {
-				//frame1
-				temp = ioread64(io_hwaddr + ADC_PCIE_ADDRESS_OFFSET + ADC_Offset * i);
-				// printk("%016lx", temp);
-				*((unsigned int *)queueBufAddr + 1) = (unsigned int)(temp & 0xFFFFFFFF);//s
-				*((unsigned int *)queueBufAddr + 2) = (unsigned int)(temp >> 32 & 0xFFFFFFFF);//ns
-				temp = ioread64(io_hwaddr + ADC_PCIE_ADDRESS_OFFSET + 8 + ADC_Offset * i);
-				// printk("%016lx", temp);
-				*((unsigned int *)queueBufAddr + 5) = (unsigned int)(temp & 0xFFFFFFFF);//chanel 1 0
-				*((unsigned int *)queueBufAddr + 6) = (unsigned int)(temp >> 32 & 0xFFFFFFFF);//chanel 3 2
-				temp = ioread64(io_hwaddr + ADC_PCIE_ADDRESS_OFFSET + 16 + ADC_Offset * i);
-				// printk("%016lx", temp);
-				*((unsigned int *)queueBufAddr + 7) = (unsigned int)(temp & 0xFFFFFFFF);//chanel 5 4
-				*((unsigned int *)queueBufAddr + 8) = (unsigned int)(temp >> 32 & 0xFFFFFFFF);//chanel 7 6
-				temp = ioread64(io_hwaddr + ADC_PCIE_ADDRESS_OFFSET + 24 + ADC_Offset * i);
-				// printk("%016lx", temp);
-				*((unsigned int *)queueBufAddr + 3) = (unsigned int)(temp & 0xFFFFFFFF);//seq
-				// *((unsigned int *)queueBufAddr + 4) = (unsigned int)(temp >> 32 & 0xFFFFFFFF);//intv
-				*((unsigned int *)queueBufAddr + 4) = inum; //for test
-				// printk("\n");
-
-				*((unsigned int *)queueBufAddr) = 0x20;//length 0x20-8 0x18
-			}
-			
-			temp = ioread64(io_hwaddr + ADC_PCIE_ADDRESS_OFFSET + 320);//触发信号
+			//frame1
+			temp = ioread64(io_hwaddr + ADC_PCIE_ADDRESS_OFFSET + ADC_Offset * i);
 			// printk("%016lx", temp);
+			*((unsigned int *)queueBufAddr + 1) = (unsigned int)(temp & 0xFFFFFFFF);//s
+			*((unsigned int *)queueBufAddr + 2) = (unsigned int)(temp >> 32 & 0xFFFFFFFF);//ns
+			temp = ioread64(io_hwaddr + ADC_PCIE_ADDRESS_OFFSET + 8 + ADC_Offset * i);
+			// printk("%016lx", temp);
+			*((unsigned int *)queueBufAddr + 5) = (unsigned int)(temp & 0xFFFFFFFF);//chanel 1 0
+			*((unsigned int *)queueBufAddr + 6) = (unsigned int)(temp >> 32 & 0xFFFFFFFF);//chanel 3 2
+			temp = ioread64(io_hwaddr + ADC_PCIE_ADDRESS_OFFSET + 16 + ADC_Offset * i);
+			// printk("%016lx", temp);
+			*((unsigned int *)queueBufAddr + 7) = (unsigned int)(temp & 0xFFFFFFFF);//chanel 5 4
+			*((unsigned int *)queueBufAddr + 8) = (unsigned int)(temp >> 32 & 0xFFFFFFFF);//chanel 7 6
+			temp = ioread64(io_hwaddr + ADC_PCIE_ADDRESS_OFFSET + 24 + ADC_Offset * i);
+			// printk("%016lx", temp);
+			*((unsigned int *)queueBufAddr + 3) = (unsigned int)(temp & 0xFFFFFFFF);//seq
+			*((unsigned int *)queueBufAddr + 4) = (unsigned int)(temp >> 32 & 0xFFFFFFFF);//intv
+			// *((unsigned int *)queueBufAddr + 4) = inum; //for test
 			// printk("\n");
-				// printk("%llx ", queueBufAddr[index]);
-				//printk("index:%u",index);
-			// }
-			
-			// printk("\n");
-			dmaQueueManagerHandler->queueArray[ADC_READ_QUEUE].tail = (dmaQueueManagerHandler->queueArray[ADC_READ_QUEUE].tail + ADC_READ_SIZE) % \
-																	dmaQueueManagerHandler->queueArray[ADC_READ_QUEUE].totalNum;
-			// if(full_print_count2++ % 1 == 0) {
-			// 	printk("tail = %u\n",dmaQueueManagerHandler->queueArray[ADC_READ_QUEUE].tail);
-			// 	printk("inum = %u\n",inum);
-			// 	printk("restIdleNum = %u\n",dmaQueueManagerHandler->queueArray[ADC_READ_QUEUE].restIdleNum);
-			// }
-			dmaQueueManagerHandler->queueArray[ADC_READ_QUEUE].restIdleNum-=ADC_READ_SIZE;
+
+			*((unsigned int *)queueBufAddr) = 0x20;//length 0x20-8 0x18
 		}
+		
+		temp = ioread64(io_hwaddr + ADC_PCIE_ADDRESS_OFFSET + 320);//触发信号
+		
+		// printk("\n");
+		if((dmaQueueManagerHandler->queueArray[ADC_READ_QUEUE].tail + ADC_READ_SIZE) >= dmaQueueManagerHandler->queueArray[ADC_READ_QUEUE].totalNum)
+		{
+			tail_count++;
+		}
+		dmaQueueManagerHandler->queueArray[ADC_READ_QUEUE].tail = (dmaQueueManagerHandler->queueArray[ADC_READ_QUEUE].tail + ADC_READ_SIZE) % \
+																dmaQueueManagerHandler->queueArray[ADC_READ_QUEUE].totalNum;
 		spin_unlock_irqrestore(&(dmaQueueManagerHandler->queueArray[ADC_READ_QUEUE].spinlock), flags);
 	}
 	else if(irq == irq_msi_vec[1])
     {
-		// spin_lock_irqsave(&(dmaQueueManagerHandler->queueArray[PPS_WAIT_QUEUS].spinlock),flagsto);
-		// pps_flag = 1;
-		// spin_unlock_irqrestore(&(dmaQueueManagerHandler->queueArray[PPS_WAIT_QUEUS].spinlock),flagsto);
 		up(&pps_semaphore);//pps
-		// printk("irq interrupt 1\n");
 	}
 	else if(irq == irq_msi_vec[2])
 	{
@@ -174,18 +149,9 @@ static irqreturn_t pcie_xdma_read_req_handler(int irq, void *dev_id)
 			if(task)
 			{
 				send_sig(misc_irq_signal, task, 0);//发送信号给应用层
-				// pr_info("send signal %d to pid %d\n", misc_irq_signal, misc_signal_pid);
-				// warn_signal = ioread32(io_hwaddr + ADC_MANIPULATE_OFFSET + ADC_WARN_OFFSET);
-				// pr_info("ADC warn signal: %x\n", warn_signal);
 			}
 		}
 	}
-	// else
-	// {
-	// 	printk("no irq interrupt\n");
-	// }
-	// pr_info("msi int: %d\n", irq);
-	// set xdma
 	/*
 	 * set source addr
 	 * set destiantion addr
@@ -207,11 +173,6 @@ static int dac_data_send(int frameIndex, int frameNum)
 	}
 	else
 	{
-		// if(dmaQueueManagerHandler->queueArray[DAC_WRITE_QUEUE].tail != frameIndex)
-		// {
-		// 	spin_unlock(&(dmaQueueManagerHandler->queueArray[DAC_WRITE_QUEUE].spinlock));
-		// 	return -ENOMEM;
-		// }
 		wake_up_process(dmaQueueManagerHandler->queueArray[DAC_WRITE_QUEUE].thread);
 		//
 		dmaQueueManagerHandler->queueArray[DAC_WRITE_QUEUE].tail = (dmaQueueManagerHandler->queueArray[DAC_WRITE_QUEUE].tail + frameNum) % dmaQueueManagerHandler->queueArray[DAC_WRITE_QUEUE].totalNum;
@@ -251,16 +212,12 @@ static int dac_thread_fn(void *data)
 			set_current_state(TASK_INTERRUPTIBLE);
         	schedule(); 
 			// usleep_range(3, 7);
-
-			// ktime_get_real_ts64(&ts);
-			// printk("Seconds: %lld, Nanoseconds: %ld\n", ts.tv_sec, ts.tv_nsec);
 		}
 		else
 		{
 			head = dmaQueueManagerHandler->queueArray[DAC_WRITE_QUEUE].head;
 			spin_unlock(&(dmaQueueManagerHandler->queueArray[DAC_WRITE_QUEUE].spinlock));
 			// send data
-			// printk("index = %d\n", head);
 			ret = adc_dma_trans_start(head, 1);
 			// printk("done\n");
 			total_transfer_times++;
@@ -402,7 +359,8 @@ static long pcie_adc_ioctl(struct file *filp, unsigned int cmd, unsigned long ar
 	int popNum;
 	long ret = -ENOMEM;
 	unsigned long flags;
-	// int full_print_count3 = 0;
+	int k2utail;
+	// struct adcFrame adctail;
 
 	switch (cmd)
 	{
@@ -433,35 +391,23 @@ static long pcie_adc_ioctl(struct file *filp, unsigned int cmd, unsigned long ar
 		frameIndex = dmaQueueManagerHandler->queueArray[ADC_READ_QUEUE].totalNum - dmaQueueManagerHandler->queueArray[ADC_READ_QUEUE].restIdleNum;
 		spin_unlock_irqrestore(&(dmaQueueManagerHandler->queueArray[ADC_READ_QUEUE].spinlock), flags);
 		// printk("frameIndex = %d", frameIndex);
-		// if(full_print_count3++ % 100 == 0)
-		// if(misc_flag == 1){
-		// 	printk("read tail = %u\n",dmaQueueManagerHandler->queueArray[ADC_READ_QUEUE].tail);
-		// 	misc_flag = 0;
-		// }
 		ret = copy_to_user((int *)arg, &frameIndex, sizeof(frameIndex));
 		break;
 
 	case DATA_READ_SUBMIT:
 		ret = copy_from_user(&popNum, (int *)arg, sizeof(popNum));
-		// if (ret == 0) {
-		// 	printk(KERN_INFO "copy_from_user success\n");
-		// } else {
-		// 	printk(KERN_ERR "copy_from_user failed, %lu bytes not copied\n", ret);
-		// }
 		spin_lock_irqsave(&(dmaQueueManagerHandler->queueArray[ADC_READ_QUEUE].spinlock), flags);
 		dmaQueueManagerHandler->queueArray[ADC_READ_QUEUE].head = (dmaQueueManagerHandler->queueArray[ADC_READ_QUEUE].head + popNum) % dmaQueueManagerHandler->queueArray[ADC_READ_QUEUE].totalNum;
 		dmaQueueManagerHandler->queueArray[ADC_READ_QUEUE].restIdleNum += popNum;
 		spin_unlock_irqrestore(&(dmaQueueManagerHandler->queueArray[ADC_READ_QUEUE].spinlock), flags);
 		break;
 
-	case SET_MISC_SIGNAL_PID:
-		misc_signal_pid = (pid_t)arg;
-		printk("misc_signal_pid:%d\n", misc_signal_pid);
-		break;
-
-	case SET_MISC_SIGNAL_NUM:
-		misc_irq_signal = (int)arg;
-		printk("misc_irq_signal:%d\n", misc_irq_signal);
+	case TAIL_RECEIVE:
+		spin_lock_irqsave(&(dmaQueueManagerHandler->queueArray[ADC_READ_QUEUE].spinlock), flags);
+		// adctail.k2ucount = tail_count;
+		k2utail = dmaQueueManagerHandler->queueArray[ADC_READ_QUEUE].tail;
+		ret = copy_to_user((int *)arg, &k2utail, sizeof(k2utail));
+		spin_unlock_irqrestore(&(dmaQueueManagerHandler->queueArray[ADC_READ_QUEUE].spinlock), flags);
 		break;
 		
 	default:
@@ -489,6 +435,7 @@ static int pcie_adc_open(struct inode *inode, struct file *file)
 	dmaQueueManagerHandler->queueArray[ADC_READ_QUEUE].restIdleNum = ADC_FRAMENUM;
 	dmaQueueManagerHandler->queueArray[ADC_READ_QUEUE].totalNum = ADC_FRAMENUM;
 	spin_unlock_irqrestore(&(dmaQueueManagerHandler->queueArray[ADC_READ_QUEUE].spinlock), flags);
+	tail_count = 0;
 	return 0;
 }
 
@@ -497,17 +444,34 @@ static int pcie_adc_open(struct inode *inode, struct file *file)
 static int pcie_adc_release(struct inode *inode, struct file *filp)
 {
 	unsigned long flags;
+	// 1. 禁止中断
+    free_irq(irq_msi_vec[0], g_pdev);
+	// 2. 确保所有mmap映射都被释放
+    mutex_lock(&(dmaQueueManagerHandler->queueArray[ADC_READ_QUEUE].mm_lock));
 	// free DMA queue
 	spin_lock_irqsave(&(dmaQueueManagerHandler->queueArray[ADC_READ_QUEUE].spinlock), flags);
 	dmaQueueManagerHandler->queueArray[ADC_READ_QUEUE].restIdleNum = 0;
 	spin_unlock_irqrestore(&(dmaQueueManagerHandler->queueArray[ADC_READ_QUEUE].spinlock), flags);
-	dma_free_coherent(&g_pdev->dev, ADC_FRAMENUM * FRAMESIZE,
-					  dmaQueueManagerHandler->queueArray[ADC_READ_QUEUE].virtualAddr,
-					  dmaQueueManagerHandler->queueArray[ADC_READ_QUEUE].queue);
+	if (dmaQueueManagerHandler->queueArray[ADC_READ_QUEUE].virtualAddr) {
+        dma_free_coherent(&g_pdev->dev, 
+                         dmaQueueManagerHandler->queueArray[ADC_READ_QUEUE].totalNum * 
+                         dmaQueueManagerHandler->queueArray[ADC_READ_QUEUE].frameSize,
+                         dmaQueueManagerHandler->queueArray[ADC_READ_QUEUE].virtualAddr,
+                         dmaQueueManagerHandler->queueArray[ADC_READ_QUEUE].queue);
+        dmaQueueManagerHandler->queueArray[ADC_READ_QUEUE].virtualAddr = NULL;
+    }
 	dmaQueueManagerHandler->queueArray[ADC_READ_QUEUE].isValid = INVALID;
+	mutex_unlock(&(dmaQueueManagerHandler->queueArray[ADC_READ_QUEUE].mm_lock));
 	
 	return 0;
 }
+
+// 可以添加一个vm_operations_struct来处理更精细的mmap管理
+static const struct vm_operations_struct pcie_adc_vm_ops = {
+    .open = NULL,
+    .close = NULL,
+    // 可以添加更多的VM操作回调
+};
 
 // ADC
 // -> ioctl
@@ -526,18 +490,14 @@ static int pcie_adc_mmap(struct file *file, struct vm_area_struct *vma)
 	vma->vm_page_prot = pgprot_decrypted(vma->vm_page_prot);
 
 	/* check there is enough space in vma */
-	if (offset < dmaQueueTotalSize)
+	if (offset >= dmaQueueTotalSize)
 	{
-		/* alloc space for dma_memcpy module */
-		len = dmaQueueTotalSize - offset;
-		vma->vm_pgoff = (phys_addr + offset) >> PAGE_SHIFT;
-	}
-	else
-	{
-		// printk("e1");
 		ret = -EINVAL;
 		goto err_quit;
 	}
+	/* alloc space for dma_memcpy module */
+	len = dmaQueueTotalSize - offset;
+	vma->vm_pgoff = (phys_addr + offset) >> PAGE_SHIFT;
 
 	len = PAGE_ALIGN(len);
 	if (vma->vm_end - vma->vm_start > len)
@@ -549,6 +509,8 @@ static int pcie_adc_mmap(struct file *file, struct vm_area_struct *vma)
 
 	/* make buffers bufferable */
 	vma->vm_page_prot = pgprot_writecombine(vma->vm_page_prot);
+	/* set vm ops */
+    vma->vm_ops = &pcie_adc_vm_ops;
 
 	/* remap the physical space to vma space */
 	if (remap_pfn_range(vma, vma->vm_start, vma->vm_pgoff,
@@ -657,13 +619,6 @@ static int pcie_dac_open(struct inode *inode, struct file *file)
 	dmaQueueManagerHandler->queueArray[DAC_WRITE_QUEUE].tail = 0;
 	dmaQueueManagerHandler->queueArray[DAC_WRITE_QUEUE].restIdleNum = DAC_FRAMENUM;
 	dmaQueueManagerHandler->queueArray[DAC_WRITE_QUEUE].totalNum = DAC_FRAMENUM;
-	// dmaQueueManagerHandler->queueArray[DAC_WRITE_QUEUE].workQueue = create_workqueue("dac_workqueue");
-	// if (dmaQueueManagerHandler->queueArray[DAC_WRITE_QUEUE].workQueue == NULL)
-	// {
-	// 	return -EINVAL;
-	// }
-	// INIT_WORK(&(dmaQueueManagerHandler->queueArray[DAC_WRITE_QUEUE].work), dma_dac_work);
-	// init_waitqueue_head(&dmaQueueManagerHandler->queueArray[DAC_WRITE_QUEUE].wait);
 	dmaQueueManagerHandler->queueArray[DAC_WRITE_QUEUE].thread = kthread_run(dac_thread_fn, "Thread Data", "dac_kthread");
 	if (IS_ERR(dmaQueueManagerHandler->queueArray[DAC_WRITE_QUEUE].thread)) {
         pr_err("Failed to create dac kernel thread\n");
@@ -683,9 +638,6 @@ static int pcie_dac_open(struct inode *inode, struct file *file)
 static int pcie_dac_release(struct inode *inode, struct file *filp)
 {
 	dac_fpga_buf_num = 0;
-	// test_zero = 0;
-	// cancel_work_sync(&(dmaQueueManagerHandler->queueArray[DAC_WRITE_QUEUE].work)); // 取消任务并等待完成
-	// destroy_workqueue(dmaQueueManagerHandler->queueArray[DAC_WRITE_QUEUE].workQueue);
 	if(dmaQueueManagerHandler->queueArray[DAC_WRITE_QUEUE].thread)
 	{
 		kthread_stop(dmaQueueManagerHandler->queueArray[DAC_WRITE_QUEUE].thread);
@@ -704,6 +656,12 @@ static int pcie_dac_release(struct inode *inode, struct file *filp)
     }
 	return 0;
 }
+
+static const struct vm_operations_struct pcie_dac_vm_ops = {
+    .open = NULL,
+    .close = NULL,
+    // 可以添加更多的VM操作回调
+};
 
 // -> ioctl DAC
 // used to map dma buffer to usr area virtual address
@@ -742,6 +700,8 @@ static int pcie_dac_mmap(struct file *file, struct vm_area_struct *vma)
 
 	/* make buffers bufferable */
 	vma->vm_page_prot = pgprot_writecombine(vma->vm_page_prot);
+	/* set vm ops */
+    vma->vm_ops = &pcie_dac_vm_ops;
 
 	/* remap the physical space to vma space */
 	if (remap_pfn_range(vma, vma->vm_start, vma->vm_pgoff,
@@ -759,37 +719,22 @@ err_quit:
 	mutex_unlock(&(dmaQueueManagerHandler->queueArray[DAC_WRITE_QUEUE].mm_lock));
 	return ret;
 }
-
+//time
+// -> open
 static int time_open(struct inode *inode, struct file *file)
 {
-	// struct phipheral_dma_stu *phipheral_pps = p_phipheral_dma;
-
-	// time_manipulate_base = ioremap(0x3c0800000, 0x10000);
-	// if (!time_manipulate_base) {
-	// 	dev_err(&g_pdev->dev, "ioremap pcie dma reg failed\n");
-	// 	return -EFAULT;
-	// }
-	// else{
-		// sema_init(&pps_semaphore,0);
-		// printk("pps_semaphore open success\n");
-	// }
-
+	sema_init(&pps_semaphore,0);
 	return 0;
 }
-
+//time
+// -> close
 static int time_release(struct inode *inode, struct file *filp)
 {
-	// struct phipheral_dma_stu *phipheral_pps = p_phipheral_dma;
-
-	// flush_work(&phipheral_pps->work);
-	// if(time_manipulate_base != 0){
-	// 	iounmap(time_manipulate_base);
-	// 	time_manipulate_base = 0;
-	// }
-
+	sema_init(&pps_semaphore,0);
 	return 0;
 }
-
+//DAC
+// -> ioctl
 static long time_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
 {
 	struct ioDataStruct ioData;
@@ -824,6 +769,114 @@ static long time_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
 		case WAIT_PPS_INTERRUPT:
 			down(&pps_semaphore);
 			break;
+		default:
+			break;
+	}
+	return ret;
+}
+//warn
+// -> open
+static int warn_open(struct inode *inode, struct file *file)
+{
+	return 0;
+}
+//warn
+// -> close
+static int warn_release(struct inode *inode, struct file *filp)
+{
+	return 0;
+}
+//warn
+// -> ioctl
+static long warn_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
+{
+	struct ioDataStruct ioData;
+	struct ioDataStruct64 ioData64;
+	long ret = -ENOMEM;
+
+	switch (cmd)
+	{
+		case IO_WR:
+			ret = copy_from_user(&ioData, (struct ioDataStruct *)arg, sizeof(struct ioDataStruct));
+			iowrite32(ioData.data, io_hwaddr + ioData.reg);
+			break;
+
+		case IO_RD:
+			ret = copy_from_user(&ioData, (struct ioDataStruct *)arg, sizeof(struct ioDataStruct));
+			ioData.data = ioread32(io_hwaddr + ioData.reg);
+			ret = copy_to_user((struct ioDataStruct *)arg, &ioData, sizeof(struct ioDataStruct));
+			break;
+
+		case IO_WR_64:
+			ret = copy_from_user(&ioData64, (struct ioDataStruct64 *)arg, sizeof(struct ioDataStruct64));
+			iowrite64(ioData64.data, io_hwaddr + ioData64.reg);
+			break;
+
+		case IO_RD_64:
+			ret = copy_from_user(&ioData64, (struct ioDataStruct64 *)arg, sizeof(struct ioDataStruct64));
+			ioData64.data = ioread64(io_hwaddr + ioData64.reg);
+			ret = copy_to_user((struct ioDataStruct64 *)arg, &ioData64, sizeof(struct ioDataStruct64));
+			break;
+
+		case SET_MISC_SIGNAL_PID:
+			misc_signal_pid = (pid_t)arg;
+			printk("misc_signal_pid:%d\n", misc_signal_pid);
+			break;
+
+		case SET_MISC_SIGNAL_NUM:
+			misc_irq_signal = (int)arg;
+			printk("misc_irq_signal:%d\n", misc_irq_signal);
+			break;
+
+		default:
+			break;
+	}
+	return ret;
+}
+//led
+// -> open
+static int led_open(struct inode *inode, struct file *file)
+{
+	return 0;
+}
+//led
+// -> close
+static int led_release(struct inode *inode, struct file *filp)
+{
+	return 0;
+}
+//led
+// -> ioctl
+static long led_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
+{
+	struct ioDataStruct ioData;
+	struct ioDataStruct64 ioData64;
+	long ret = -ENOMEM;
+
+	switch (cmd)
+	{
+		case IO_WR:
+			ret = copy_from_user(&ioData, (struct ioDataStruct *)arg, sizeof(struct ioDataStruct));
+			iowrite32(ioData.data, io_hwaddr + ioData.reg);
+			break;
+
+		case IO_RD:
+			ret = copy_from_user(&ioData, (struct ioDataStruct *)arg, sizeof(struct ioDataStruct));
+			ioData.data = ioread32(io_hwaddr + ioData.reg);
+			ret = copy_to_user((struct ioDataStruct *)arg, &ioData, sizeof(struct ioDataStruct));
+			break;
+
+		case IO_WR_64:
+			ret = copy_from_user(&ioData64, (struct ioDataStruct64 *)arg, sizeof(struct ioDataStruct64));
+			iowrite64(ioData64.data, io_hwaddr + ioData64.reg);
+			break;
+
+		case IO_RD_64:
+			ret = copy_from_user(&ioData64, (struct ioDataStruct64 *)arg, sizeof(struct ioDataStruct64));
+			ioData64.data = ioread64(io_hwaddr + ioData64.reg);
+			ret = copy_to_user((struct ioDataStruct64 *)arg, &ioData64, sizeof(struct ioDataStruct64));
+			break;
+
 		default:
 			break;
 	}
@@ -866,6 +919,30 @@ static struct miscdevice pcie_time_dev = {
 	.minor = MISC_DYNAMIC_MINOR,
 	.name = "PCIE_TIME",
 	.fops = &pcie_time_fops,
+};
+
+static const struct file_operations pcie_warn_fops = {
+	.open = warn_open,
+	.release = warn_release,
+	.unlocked_ioctl = warn_ioctl,
+};
+
+static struct miscdevice pcie_warn_dev = {
+	.minor = MISC_DYNAMIC_MINOR,
+	.name = "PCIE_WARN",
+	.fops = &pcie_warn_fops,
+};
+
+static const struct file_operations pcie_led_fops = {
+	.open = led_open,
+	.release = led_release,
+	.unlocked_ioctl = led_ioctl,
+};
+
+static struct miscdevice pcie_led_dev = {
+	.minor = MISC_DYNAMIC_MINOR,
+	.name = "PCIE_LED",
+	.fops = &pcie_led_fops,
 };
 
 // info dev
@@ -1031,7 +1108,6 @@ static int pci_probe(struct pci_dev *pdev, const struct pci_device_id *ent)
 	spin_lock_init(&(dmaQueueManagerHandler->queueArray[ADC_READ_QUEUE].spinlock));
 	mutex_init(&(dmaQueueManagerHandler->queueArray[DAC_WRITE_QUEUE].mm_lock));
 	spin_lock_init(&(dmaQueueManagerHandler->queueArray[DAC_WRITE_QUEUE].spinlock));
-	// dmaQueueManagerHandler->currentMemMapControl = NONE;
 
 	/* 2. register misc device */
 	ret = misc_register(&pcie_adc_dev);
@@ -1058,6 +1134,18 @@ static int pci_probe(struct pci_dev *pdev, const struct pci_device_id *ent)
 	{
 		printk("%s : Can not register misc device, error code: %d\n", DRIVER_NAME, ret);
 		goto err7;
+	}
+	ret = misc_register(&pcie_warn_dev);
+	if (ret < 0)
+	{
+		printk("%s : Can not register misc device, error code: %d\n",DRIVER_NAME, ret);
+		goto err8;
+	}
+	ret = misc_register(&pcie_led_dev);
+	if(ret < 0)
+	{
+		printk("%s : Can not register misc device, error code: %d\n",DRIVER_NAME, ret);
+		goto err9;
 	}
 	sema_init(&pps_semaphore,0);
 	// request msi/msix IRQ
@@ -1128,8 +1216,11 @@ err7:
 	misc_deregister(&pcie_adc_dev);
 	misc_deregister(&pcie_dac_dev);
 	misc_deregister(&pcie_info);
+err8:
+	misc_deregister(&pcie_warn_dev);
+err9:
+	misc_deregister(&pcie_led_dev);
 	return -EFAULT;
-
 }
 
 // 3. 设备移除函数
@@ -1198,5 +1289,5 @@ module_init(pci_driver_init);
 module_exit(pci_driver_exit);
 
 MODULE_LICENSE("GPL");
-MODULE_AUTHOR("guo liang");
+MODULE_AUTHOR("guo liang & wym");
 MODULE_DESCRIPTION("PCIe FPGA Driver");

@@ -31,7 +31,7 @@
 
 #define DRIVER_NAME "pci_fpga_driver"
 
-#define DRIVER_VERSION 2506200101
+#define DRIVER_VERSION 2508080101
 
 static struct semaphore pps_semaphore;
 static void __iomem *io_hwaddr;

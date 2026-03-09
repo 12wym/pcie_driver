@@ -84,7 +84,7 @@ static irqreturn_t pcie_xdma_read_req_handler(int irq, void *dev_id)
 	if(irq == irq_msi_vec[0])
 	{
 		// misc_flag = 1;
-		spin_lock_irqsave(&(dmaQueueManagerHandler->queueArray[ADC_READ_QUEUE].spinlock), flags);
+		spin_lock_irqsave(&(dmaQueueManagerHandler->queueArray[ADC_READ_QUEUE].spinlock), flags);//关闭本地CPU中断并加自旋锁，防止中断嵌套导致的竞态
 		// 检查关键指针是否有效
 		if (!io_hwaddr || !dmaQueueManagerHandler) {
 			pr_err("Invalid io_hwaddr or dmaQueueManagerHandler!\n");
@@ -143,9 +143,9 @@ static irqreturn_t pcie_xdma_read_req_handler(int irq, void *dev_id)
 	{
 		printk("irq interrupt 3\n");
 		// printk("misc_signal_pid:%d\n", misc_signal_pid);
-		if(misc_signal_pid > 0)
+		if(misc_signal_pid > 0)//目标用户态进程PID
 		{
-			struct task_struct *task = pid_task(find_vpid(misc_signal_pid), PIDTYPE_PID);
+			struct task_struct *task = pid_task(find_vpid(misc_signal_pid), PIDTYPE_PID);//通过PID查找虚拟进程ID，将虚拟PID转为内核task_struct(进程描述符)
 			if(task)
 			{
 				send_sig(misc_irq_signal, task, 0);//发送信号给应用层
@@ -396,7 +396,7 @@ static long pcie_adc_ioctl(struct file *filp, unsigned int cmd, unsigned long ar
 
 	case DATA_READ_SUBMIT:
 		ret = copy_from_user(&popNum, (int *)arg, sizeof(popNum));
-		spin_lock_irqsave(&(dmaQueueManagerHandler->queueArray[ADC_READ_QUEUE].spinlock), flags);
+		spin_lock_irqsave(&(dmaQueueManagerHandler->queueArray[ADC_READ_QUEUE].spinlock), flags);//防止死锁
 		dmaQueueManagerHandler->queueArray[ADC_READ_QUEUE].head = (dmaQueueManagerHandler->queueArray[ADC_READ_QUEUE].head + popNum) % dmaQueueManagerHandler->queueArray[ADC_READ_QUEUE].totalNum;
 		dmaQueueManagerHandler->queueArray[ADC_READ_QUEUE].restIdleNum += popNum;
 		spin_unlock_irqrestore(&(dmaQueueManagerHandler->queueArray[ADC_READ_QUEUE].spinlock), flags);
@@ -669,21 +669,21 @@ static int pcie_dac_mmap(struct file *file, struct vm_area_struct *vma)
 {
 	u32 len;
 	int ret = -EINVAL;
-	unsigned long offset = vma->vm_pgoff << PAGE_SHIFT;
+	unsigned long offset = vma->vm_pgoff << PAGE_SHIFT;//用户mmap时指定的偏移量(vm_pgoff是按页计数的偏移，左移PAGE_SHIFT(通常 12)转换为字节偏移)
 	phys_addr_t phys_addr;
 	unsigned long dmaQueueTotalSize = dmaQueueManagerHandler->queueArray[DAC_WRITE_QUEUE].frameSize * dmaQueueManagerHandler->queueArray[DAC_WRITE_QUEUE].totalNum;
-	phys_addr = dmaQueueManagerHandler->queueArray[DAC_WRITE_QUEUE].queue;
-	mutex_lock(&(dmaQueueManagerHandler->queueArray[DAC_WRITE_QUEUE].mm_lock));
+	phys_addr = dmaQueueManagerHandler->queueArray[DAC_WRITE_QUEUE].queue;//要映射的物理内存起始地址
+	mutex_lock(&(dmaQueueManagerHandler->queueArray[DAC_WRITE_QUEUE].mm_lock));//保护该队列mmap操作的互斥锁，防止多进程同时映射导致竞争
 
 	/* get page protection attribute in vma */
-	vma->vm_page_prot = pgprot_decrypted(vma->vm_page_prot);
+	vma->vm_page_prot = pgprot_decrypted(vma->vm_page_prot);//将内存页的保护属性设置为解密，用户态可访问
 
 	/* check there is enough space in vma */
 	if (offset < dmaQueueTotalSize)
 	{
 		/* alloc space for dma_memcpy module */
 		len = dmaQueueTotalSize - offset;
-		vma->vm_pgoff = (phys_addr + offset) >> PAGE_SHIFT;
+		vma->vm_pgoff = (phys_addr + offset) >> PAGE_SHIFT;//重新设置vm_pgoff(将物理起始地址+偏移转换为按页技术的偏移，供后续映射使用)
 	}
 	else
 	{
@@ -691,28 +691,28 @@ static int pcie_dac_mmap(struct file *file, struct vm_area_struct *vma)
 		goto err_quit;
 	}
 
-	len = PAGE_ALIGN(len);
-	if (vma->vm_end - vma->vm_start > len)
+	len = PAGE_ALIGN(len);//内存长度按页对齐，将len向上对齐到最近的页面大小
+	if (vma->vm_end - vma->vm_start > len)//如果请求长度大于实际可映射的len，请求超出物理内存
 	{
 		ret = -EINVAL;
 		goto err_quit;
 	}
 
 	/* make buffers bufferable */
-	vma->vm_page_prot = pgprot_writecombine(vma->vm_page_prot);
+	vma->vm_page_prot = pgprot_writecombine(vma->vm_page_prot);//设置内存写合并属性，适用于dma/外设的内存访问，提升批量写的性能
 	/* set vm ops */
-    vma->vm_ops = &pcie_dac_vm_ops;
+    vma->vm_ops = &pcie_dac_vm_ops;//关联虚拟内存操作集，将自定义的vm操作集指向vm_operations_struct结构体的指针
 
 	/* remap the physical space to vma space */
 	if (remap_pfn_range(vma, vma->vm_start, vma->vm_pgoff,
-						vma->vm_end - vma->vm_start, vma->vm_page_prot))
+						vma->vm_end - vma->vm_start, vma->vm_page_prot))//将物理内存映射到用户态虚拟地址空间，#要映射的虚拟内存区域，#用户态虚拟地址起始位置，#物理内存的页帧号，#映射长度，#页保护属性
 	{
 		dev_err(&g_pdev->dev, "mmap remap_pfn_range failed\n");
 		ret = -ENOBUFS;
 		goto err_quit;
 	}
 
-	mutex_unlock(&(dmaQueueManagerHandler->queueArray[DAC_WRITE_QUEUE].mm_lock));
+	mutex_unlock(&(dmaQueueManagerHandler->queueArray[DAC_WRITE_QUEUE].mm_lock));//映射成功：解锁互斥锁
 	return 0;
 
 err_quit:

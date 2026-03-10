@@ -173,7 +173,7 @@ static int dac_data_send(int frameIndex, int frameNum)
 	}
 	else
 	{
-		wake_up_process(dmaQueueManagerHandler->queueArray[DAC_WRITE_QUEUE].thread);
+		wake_up_process(dmaQueueManagerHandler->queueArray[DAC_WRITE_QUEUE].thread);//唤醒线程
 		//
 		dmaQueueManagerHandler->queueArray[DAC_WRITE_QUEUE].tail = (dmaQueueManagerHandler->queueArray[DAC_WRITE_QUEUE].tail + frameNum) % dmaQueueManagerHandler->queueArray[DAC_WRITE_QUEUE].totalNum;
 		dmaQueueManagerHandler->queueArray[DAC_WRITE_QUEUE].restIdleNum -= frameNum; // = dmaQueueManagerHandler->queueArray[DAC_WRITE_QUEUE].totalNum - ((dmaQueueManagerHandler->queueArray[DAC_WRITE_QUEUE].tail - dmaQueueManagerHandler->queueArray[DAC_WRITE_QUEUE].head) % dmaQueueManagerHandler->queueArray[DAC_WRITE_QUEUE].totalNum)
@@ -183,7 +183,7 @@ static int dac_data_send(int frameIndex, int frameNum)
 }
 
 // DAC send thread
-static int dac_thread_fn(void *data)
+static int dac_thread_fn(void *data)//负责DAC 写队列的 DMA 数据传输调度
 {
 	int head;
 	
@@ -191,10 +191,10 @@ static int dac_thread_fn(void *data)
 	struct cpumask mask;
 	struct sched_param params;
 	params.sched_priority = 99;
-	sched_setscheduler(current, SCHED_FIFO, &params);
+	sched_setscheduler(current, SCHED_FIFO, &params);//实时调度配置
     cpumask_clear(&mask);
     cpumask_set_cpu(3, &mask); // 绑定到 CPU 3
-    sched_setaffinity(0, &mask); // 绑定当前线程
+    sched_setaffinity(0, &mask); // 绑定当前线程 CPU 亲和性配置
 	transfer_times = 0;
 	transfer_error_times = 0;
 	total_transfer_times = 0;
@@ -204,21 +204,21 @@ static int dac_thread_fn(void *data)
 	{
 		spin_lock(&(dmaQueueManagerHandler->queueArray[DAC_WRITE_QUEUE].spinlock));
 		// judge empty
-		if (dmaQueueManagerHandler->queueArray[DAC_WRITE_QUEUE].totalNum - dmaQueueManagerHandler->queueArray[DAC_WRITE_QUEUE].restIdleNum <= 0)
+		if (dmaQueueManagerHandler->queueArray[DAC_WRITE_QUEUE].totalNum - dmaQueueManagerHandler->queueArray[DAC_WRITE_QUEUE].restIdleNum <= 0)//加自旋锁 + 判断队列是否为空
 		{
 			// empty -> no data
 			spin_unlock(&(dmaQueueManagerHandler->queueArray[DAC_WRITE_QUEUE].spinlock));
 			total_transfer_times = 0;
-			set_current_state(TASK_INTERRUPTIBLE);
-        	schedule(); 
+			set_current_state(TASK_INTERRUPTIBLE);//将线程状态设为 “可中断休眠”，表示线程可被信号唤醒
+        	schedule();//主动放弃 CPU，让内核调度其他线程运行
 			// usleep_range(3, 7);
 		}
 		else
 		{
-			head = dmaQueueManagerHandler->queueArray[DAC_WRITE_QUEUE].head;
+			head = dmaQueueManagerHandler->queueArray[DAC_WRITE_QUEUE].head;//读取队列head（待传输帧的索引），然后立即解锁（自旋锁仅保护临界区，避免长时间持有）
 			spin_unlock(&(dmaQueueManagerHandler->queueArray[DAC_WRITE_QUEUE].spinlock));
 			// send data
-			ret = adc_dma_trans_start(head, 1);
+			ret = adc_dma_trans_start(head, 1);//解锁后执行耗时的 DMA 传输操作
 			// printk("done\n");
 			total_transfer_times++;
 			if(ret >= 0)
@@ -230,11 +230,11 @@ static int dac_thread_fn(void *data)
 				transfer_error_times++;
 				// printk("%s : FPGA BUF FULL! success times : %llu, error times : %llu\n", DRIVER_NAME, transfer_times, transfer_error_times);
 			}
-			spin_lock(&(dmaQueueManagerHandler->queueArray[DAC_WRITE_QUEUE].spinlock));
+			spin_lock(&(dmaQueueManagerHandler->queueArray[DAC_WRITE_QUEUE].spinlock));//更新队列状态，需重新加锁
 			dmaQueueManagerHandler->queueArray[DAC_WRITE_QUEUE].restIdleNum++;
 			dmaQueueManagerHandler->queueArray[DAC_WRITE_QUEUE].head = (dmaQueueManagerHandler->queueArray[DAC_WRITE_QUEUE].head + 1) % dmaQueueManagerHandler->queueArray[DAC_WRITE_QUEUE].totalNum;
 			spin_unlock(&(dmaQueueManagerHandler->queueArray[DAC_WRITE_QUEUE].spinlock));
-			if(total_transfer_times >= 7000)
+			if(total_transfer_times >= 7000)//高频传输后的调度优化：当总尝试次数≥7000 次时，清零计数，并调用schedule()主动调度
 			{
 				total_transfer_times = 0;
 				// printk("kt_sleep\n");
@@ -252,6 +252,9 @@ static int dac_thread_fn(void *data)
 	return 0;
 }
 
+//负责启动一次DAC写队列的DMA传输，从内核 DMA 队列的指定帧位置读取数据，通过 XDMA 引擎将数据从内存传输到 PCIe 设备（FPGA/DAC）的硬件缓冲区；
+//包含 FPGA 缓冲区满的重试机制、DMA 寄存器配置、传输状态等待与错误处理，确保数据可靠传输。
+//要传输的dac队列帧起始索引；要传输的帧数
 static int adc_dma_trans_start(int sendFrameIndex, int sendFrameNum)
 {
 	unsigned long reg_val;
@@ -262,7 +265,7 @@ static int adc_dma_trans_start(int sendFrameIndex, int sendFrameNum)
 	// {
 	// 	++test_zero;
 	// }
-	if(dac_fpga_buf_num <= 0)
+	if(dac_fpga_buf_num <= 0)//fpga缓冲区大小
 	{
 		do
 		{
@@ -279,20 +282,20 @@ static int adc_dma_trans_start(int sendFrameIndex, int sendFrameNum)
 	}
 	dac_fpga_buf_num--;
 
-	writel(0x1, adc_dma_manipulate_base + DMA_WRITE_ENGINE_EN_OFF);
+	writel(0x1, adc_dma_manipulate_base + DMA_WRITE_ENGINE_EN_OFF);//启用 DMA 写引擎
 	/* 
 	 * 2. DMA Write Interrupt unMask 
 	 * 0x0 : unmask
 	 * 0x10001 : mask complete and abort int
 	 */
-	writel(0x10001, adc_dma_manipulate_base + DMA_WRITE_INT_MASK_OFF);	
+	writel(0x10001, adc_dma_manipulate_base + DMA_WRITE_INT_MASK_OFF);//屏蔽 DMA 写中断
 	/*
 	 * 3. DMA Channel Control 1 register
 	 * Local Interrupt Enable (LIE) =1
 	 * Remote Interrupt Enable (RIE) =0
 	 * AT, RO, NS, TC, Function Number =0
 	 */
-	writel(0x04000008, adc_dma_manipulate_base + DMA_CH_CONTROL1_OFF_WRCH_0);
+	writel(0x04000008, adc_dma_manipulate_base + DMA_CH_CONTROL1_OFF_WRCH_0);//配置 DMA 通道控制寄存器
 	/*
 	 * 4.
 	 * DMA Transfer Size
@@ -304,21 +307,21 @@ static int adc_dma_trans_start(int sendFrameIndex, int sendFrameNum)
 	// writel(FRAMESIZE * sendFrameNum,
 	// 	   adc_dma_manipulate_base + DMA_TRANSFER_SIZE_OFF_WRCH_0);
 	writel(64 * sendFrameNum,
-		   adc_dma_manipulate_base + DMA_TRANSFER_SIZE_OFF_WRCH_0);
+		   adc_dma_manipulate_base + DMA_TRANSFER_SIZE_OFF_WRCH_0);//配置 DMA 传输大小
 	writel(lower_32_bits(dmaQueueManagerHandler->queueArray[DAC_WRITE_QUEUE].queue + sendFrameIndex * FRAMESIZE),
-		   adc_dma_manipulate_base + DMA_SAR_LOW_OFF_WRCH_0);
+		   adc_dma_manipulate_base + DMA_SAR_LOW_OFF_WRCH_0);//配置 DMA 源地址
 	writel(upper_32_bits(dmaQueueManagerHandler->queueArray[DAC_WRITE_QUEUE].queue + sendFrameIndex * FRAMESIZE),
 		   adc_dma_manipulate_base + DMA_SAR_HIGH_OFF_WRCH_0);
 	dest_addr = pcie_base0_address + DAC_PCIE_ADDRESS_OFFSET;
 	writel(lower_32_bits(dest_addr),
-		   adc_dma_manipulate_base + DMA_DAR_LOW_OFF_WRCH_0);
+		   adc_dma_manipulate_base + DMA_DAR_LOW_OFF_WRCH_0);////配置 DMA 目的地址
 	writel(upper_32_bits(dest_addr),
 		   adc_dma_manipulate_base + DMA_DAR_HIGH_OFF_WRCH_0);
 
 	/* enable dma write channel 0 */
-	writel(0x0, adc_dma_manipulate_base + DMA_WRITE_DOORBELL_OFF);
+	writel(0x0, adc_dma_manipulate_base + DMA_WRITE_DOORBELL_OFF);//触发 DMA 传输
 	// printk("dma enter\n");
-	while (1)
+	while (1)//轮询 DMA 传输状态
 	{
 		reg_val = readl(adc_dma_manipulate_base + DMA_WRITE_INT_STATUS_OFF);
 		// check DMA int status
@@ -333,12 +336,12 @@ static int adc_dma_trans_start(int sendFrameIndex, int sendFrameNum)
 	}
 
 	/* clear int status  */
-	writel(BIT(16) | BIT(0), adc_dma_manipulate_base + DMA_WRITE_INT_CLEAR_OFF);
+	writel(BIT(16) | BIT(0), adc_dma_manipulate_base + DMA_WRITE_INT_CLEAR_OFF);//清除 DMA 中断状态
 
 	/* DMA Write Engine Disable */
-	writel(0x0, adc_dma_manipulate_base + DMA_WRITE_ENGINE_EN_OFF);
+	writel(0x0, adc_dma_manipulate_base + DMA_WRITE_ENGINE_EN_OFF);//禁用 DMA 写引擎
 
-	if (test_bit(INT_STATUS_ABORT_BIT, &reg_val))
+	if (test_bit(INT_STATUS_ABORT_BIT, &reg_val))//错误判断与返回
 	{
 		dev_err(&g_pdev->dev, "dma transfer from mem to pcie err\n");
 		return -EAGAIN;
@@ -1046,27 +1049,27 @@ static int pci_probe(struct pci_dev *pdev, const struct pci_device_id *ent)
 		   pdev->vendor, pdev->device);
 
 	// enable PCIE device
-	if (pci_enable_device(pdev))
+	if (pci_enable_device(pdev))//使能 PCIe 设备
 	{
 		printk(KERN_ERR "Failed to enable PCIe device\n");
 		return -ENODEV;
 	}
-	g_pdev = pdev;
+	g_pdev = pdev;//保存当前设备句柄供其他函数（如中断处理、mmap）使用
 
-	ret = pci_request_regions(pdev, DRIVER_NAME);
+	ret = pci_request_regions(pdev, DRIVER_NAME);//申请 PCI 地址区域
 	if (ret)
 	{
 		dev_err(&pdev->dev, "Failed to request PCI regions\n");
 		goto err1;
 	}
-	pci_set_master(pdev);
-	pci_read_config_word(pdev, PCI_VENDOR_ID, &vendor_id);
+	pci_set_master(pdev);//设置设备为主控设备：pci_set_master启用 PCIe 设备的总线主控能力，允许设备发起 DMA 传输（必须调用，否则 DMA 无法工作）
+	pci_read_config_word(pdev, PCI_VENDOR_ID, &vendor_id);//读取配置空间：从 PCI 配置空间读取厂商 ID 和设备 ID
 	pci_read_config_word(pdev, PCI_DEVICE_ID, &device_id);
 
 	// 读取 BAR0 寄存器的值
-	pci_read_config_dword(pdev, PCI_BASE_ADDRESS_0, &bar0);
-	io_start = pci_resource_start(pdev, 0);
-	io_len = pci_resource_len(pdev, 0);
+	pci_read_config_dword(pdev, PCI_BASE_ADDRESS_0, &bar0);//直接读取 BAR0/BAR1 寄存器值，通常bar0是IO空间，bar1是内存空间
+	io_start = pci_resource_start(pdev, 0);//获取 BAR0 对应的物理地址起始值
+	io_len = pci_resource_len(pdev, 0);//获取 BAR0 地址区域的长度
 	pci_read_config_dword(pdev, PCI_BASE_ADDRESS_1, &bar1);
 	mem_start = pci_resource_start(pdev, 1);
 	mem_len = pci_resource_len(pdev, 1);
@@ -1084,7 +1087,7 @@ static int pci_probe(struct pci_dev *pdev, const struct pci_device_id *ent)
 		pr_info("io vir addr : %p\n", io_hwaddr);
 		pcie_base0_address = mem_start;
 	}
-	else
+	else //当前是0x755
 	{
 		io_hwaddr = ioremap(io_start, io_len); // MEM space map, used to signl address manipulate
 		if (!io_hwaddr)
@@ -1096,7 +1099,7 @@ static int pci_probe(struct pci_dev *pdev, const struct pci_device_id *ent)
 	}
 
 	/* 1. alloc dmaQueueManagerHandler memory, store dma queue manager properties */
-	dmaQueueManagerHandler = kzalloc(sizeof(struct dmaQueueManagerSpace), GFP_KERNEL);
+	dmaQueueManagerHandler = kzalloc(sizeof(struct dmaQueueManagerSpace), GFP_KERNEL);//分配 DMA 队列管理器内存
 	if (dmaQueueManagerHandler < 0)
 	{
 		printk("%s : Can not allocate dmaQueueManagerHandler\n", DRIVER_NAME);
@@ -1109,7 +1112,7 @@ static int pci_probe(struct pci_dev *pdev, const struct pci_device_id *ent)
 	mutex_init(&(dmaQueueManagerHandler->queueArray[DAC_WRITE_QUEUE].mm_lock));
 	spin_lock_init(&(dmaQueueManagerHandler->queueArray[DAC_WRITE_QUEUE].spinlock));
 
-	/* 2. register misc device */
+	/* 2. register misc device 注册杂项设备主设备号为10（核心用户态接口）*/
 	ret = misc_register(&pcie_adc_dev);
 	if (ret < 0)
 	{
@@ -1147,9 +1150,9 @@ static int pci_probe(struct pci_dev *pdev, const struct pci_device_id *ent)
 		printk("%s : Can not register misc device, error code: %d\n",DRIVER_NAME, ret);
 		goto err9;
 	}
-	sema_init(&pps_semaphore,0);
+	sema_init(&pps_semaphore,0);//初始化 PPS 信号量
 	// request msi/msix IRQ
-	num_vectors = pci_alloc_irq_vectors(pdev, 3, 8, PCI_IRQ_MSIX | PCI_IRQ_MSI);
+	num_vectors = pci_alloc_irq_vectors(pdev, 3, 8, PCI_IRQ_MSIX | PCI_IRQ_MSI);//申请 MSI/MSI-X 中断向量，最少3个，最多8个
 	if (num_vectors < 3)
 	{
 		pr_err("Failed to allocate IRQ vectors\n");
@@ -1160,7 +1163,7 @@ static int pci_probe(struct pci_dev *pdev, const struct pci_device_id *ent)
 		printk("Allocated %d IRQ vectors\n", num_vectors);
 	}
 	msi_irq_num = num_vectors;
-	irq_msi_vec = (int *)kzalloc(sizeof(int) * num_vectors, GFP_KERNEL);
+	irq_msi_vec = (int *)kzalloc(sizeof(int) * num_vectors, GFP_KERNEL);//全局数组，存储每个中断向量的中断号
 	if(!irq_msi_vec)
 	{
 		goto err4;
@@ -1173,7 +1176,7 @@ static int pci_probe(struct pci_dev *pdev, const struct pci_device_id *ent)
 			goto err4;
 		}
 		irq_msi_vec[i] = irq_msi;
-		ret = request_irq(irq_msi, pcie_xdma_read_req_handler, IRQF_SHARED, "my_pcie_irq", pdev);
+		ret = request_irq(irq_msi, pcie_xdma_read_req_handler, IRQF_SHARED, "my_pcie_irq", pdev);//注册中断处理函数pcie_xdma_read_req_handler，IRQF_SHARED表示中断可共享，pdev作为中断标识（卸载时释放）
 		if (ret)
 		{
 			pci_disable_msi(pdev);

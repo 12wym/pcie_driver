@@ -133,6 +133,7 @@ static irqreturn_t pcie_xdma_read_req_handler(int irq, void *dev_id)
 		}
 		dmaQueueManagerHandler->queueArray[ADC_READ_QUEUE].tail = (dmaQueueManagerHandler->queueArray[ADC_READ_QUEUE].tail + ADC_READ_SIZE) % \
 																dmaQueueManagerHandler->queueArray[ADC_READ_QUEUE].totalNum;
+		dmaQueueManagerHandler->queueArray[ADC_READ_QUEUE].restIdleNum-=ADC_READ_SIZE;
 		spin_unlock_irqrestore(&(dmaQueueManagerHandler->queueArray[ADC_READ_QUEUE].spinlock), flags);
 	}
 	else if(irq == irq_msi_vec[1])

@@ -1153,7 +1153,7 @@ static int pci_probe(struct pci_dev *pdev, const struct pci_device_id *ent)
 	}
 	sema_init(&pps_semaphore,0);//初始化 PPS 信号量
 	// request msi/msix IRQ
-	num_vectors = pci_alloc_irq_vectors(pdev, 3, 8, PCI_IRQ_MSIX | PCI_IRQ_MSI);//申请 MSI/MSI-X 中断向量，最少3个，最多8个
+	num_vectors = pci_alloc_irq_vectors(pdev, 3, 8, PCI_IRQ_MSIX | PCI_IRQ_MSI);//申请 MSI/MSI-X 中断向量，最少3个，最多8个，内部完成检测支持，分配向量，启用msi
 	if (num_vectors < 3)
 	{
 		pr_err("Failed to allocate IRQ vectors\n");
@@ -1164,7 +1164,7 @@ static int pci_probe(struct pci_dev *pdev, const struct pci_device_id *ent)
 		printk("Allocated %d IRQ vectors\n", num_vectors);
 	}
 	msi_irq_num = num_vectors;
-	irq_msi_vec = (int *)kzalloc(sizeof(int) * num_vectors, GFP_KERNEL);//全局数组，存储每个中断向量的中断号
+	irq_msi_vec = (int *)kzalloc(sizeof(int) * num_vectors, GFP_KERNEL);//全局数组，存储每个中断向量的中断号，避免未初始化内存的脏数据
 	if(!irq_msi_vec)
 	{
 		goto err4;
